@@ -1,6 +1,5 @@
 plugins {
     id("dev.architectury.loom").version("1.9-SNAPSHOT")
-    id("com.hypherionmc.modutils.modpublisher").version("2.+")
     id("maven-publish")
 }
 
@@ -12,9 +11,6 @@ val forgematica_version: String by project
 
 val archives_base_name: String by project
 val mod_version: String by project
-
-val curseforge_id: String by project
-val modrinth_id: String by project
 
 base.archivesName = archives_base_name
 version = "${mod_version}+mc${minecraft_version}"
@@ -66,20 +62,4 @@ tasks.withType<ProcessResources> {
     filesMatching("META-INF/mods.toml") {
         expand(mapOf("version" to version))
     }
-}
-
-publisher {
-    apiKeys.modrinth(System.getenv("MODRINTH_TOKEN"))
-    apiKeys.curseforge(System.getenv("CURSEFORGE_TOKEN"))
-
-    curseID.set("$curseforge_id")
-    modrinthID.set("$modrinth_id")
-    versionType.set("alpha")
-    changelog.set(file("CHANGELOG.md"))
-    displayName.set("${mod_version}+mc${minecraft_version}")
-    gameVersions.set(listOf("1.20", "1.20.1"))
-    loaders.set(listOf(loom.platform.get().id()))
-    projectVersion.set("${mod_version}+mc${minecraft_version}")
-    artifact.set(tasks.remapJar)
-    addAdditionalFile(tasks.remapSourcesJar)
 }
