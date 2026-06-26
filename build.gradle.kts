@@ -13,7 +13,7 @@ val archives_base_name: String by project
 val mod_version: String by project
 
 base.archivesName = archives_base_name
-version = "${mod_version}+mc${minecraft_version}"
+version = "${mod_version}-mc${minecraft_version}"
 
 loom {
     forge {
