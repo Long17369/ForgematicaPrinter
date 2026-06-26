@@ -48,12 +48,10 @@ public class MixinClientPlayerEntity extends AbstractClientPlayerEntity {
         }
 
         // Dirty optimization
-        boolean didFindPlacement = true;
         for (int i = 0; i < 10; i++) {
-            if (didFindPlacement) {
-                didFindPlacement = LitematicaMixinMod.printer.onGameTick();
+            if (!LitematicaMixinMod.printer.onGameTick()) {
+                break;
             }
-            LitematicaMixinMod.printer.actionHandler.onGameTick();
         }
     }
 

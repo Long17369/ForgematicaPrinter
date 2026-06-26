@@ -1,19 +1,30 @@
 package me.aleksilassila.litematica.printer;
 
 import fi.dy.masa.litematica.data.DataManager;
-import fi.dy.masa.litematica.util.RayTraceUtils;
+import fi.dy.masa.litematica.materials.MaterialCache;
+import fi.dy.masa.litematica.util.EntityUtils;
+import fi.dy.masa.litematica.util.InventoryUtils;
+import fi.dy.masa.litematica.util.PlacementHandler;
+import fi.dy.masa.litematica.util.WorldUtils;
+import fi.dy.masa.litematica.util.EasyPlaceProtocol;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
-import me.aleksilassila.litematica.printer.actions.Action;
 import me.aleksilassila.litematica.printer.config.Configs;
 import me.aleksilassila.litematica.printer.config.Hotkeys;
-import me.aleksilassila.litematica.printer.guides.Guide;
-import me.aleksilassila.litematica.printer.guides.Guides;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.SlabBlock;
+import net.minecraft.block.enums.BlockHalf;
+import net.minecraft.block.enums.SlabType;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.player.PlayerAbilities;
+import net.minecraft.item.ItemStack;
+import net.minecraft.state.property.Properties;
+import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.apache.logging.log4j.LogManager;
@@ -27,20 +38,15 @@ public class Printer {
     public static final Logger logger = LogManager.getLogger(PrinterReference.MOD_ID);
     @Nonnull
     public final ClientPlayerEntity player;
-    public final ActionHandler actionHandler;
-    private final Guides interactionGuides = new Guides();
+
+    private int tickCounter = 0;
 
     public Printer(@Nonnull MinecraftClient client, @Nonnull ClientPlayerEntity player) {
         this.player = player;
-        this.actionHandler = new ActionHandler(client, player);
     }
 
     public boolean onGameTick() {
         WorldSchematic worldSchematic = SchematicWorldHandler.getSchematicWorld();
-
-        if (!actionHandler.acceptsActions()) {
-            return false;
-        }
 
         if (worldSchematic == null) {
             return false;
@@ -55,34 +61,125 @@ public class Printer {
             return false;
         }
 
+        // Rate limit: respect PRINTING_INTERVAL
+        int tickRate = Configs.PRINTING_INTERVAL.getIntegerValue();
+        tickCounter++;
+        if (tickCounter % tickRate != 0) {
+            return false;
+        }
+
         List<BlockPos> positions = getReachablePositions();
-        findBlock:
-        for (BlockPos position : positions) {
-            SchematicBlockState state = new SchematicBlockState(player.getWorld(), worldSchematic, position);
-            if (state.targetState.equals(state.currentState) || state.targetState.isAir()) {
+        for (BlockPos pos : positions) {
+            BlockState stateSchematic = worldSchematic.getBlockState(pos);
+            BlockState stateClient = player.getWorld().getBlockState(pos);
+
+            // Skip if already correct or air
+            if (stateSchematic.equals(stateClient) || stateSchematic.isAir()) {
                 continue;
             }
 
-            Guide[] guides = interactionGuides.getInteractionGuides(state);
+            // Get required item via Forgematica's MaterialCache
+            ItemStack stack = MaterialCache.getInstance().getRequiredBuildItemForState(stateSchematic);
+            if (stack.isEmpty()) continue;
 
-            BlockHitResult result = RayTraceUtils.traceToSchematicWorld(player, 10, true, true);
-            boolean isCurrentlyLookingSchematic = result != null && result.getBlockPos().equals(position);
+            // Switch to the required item
+            InventoryUtils.schematicWorldPickBlock(stack, pos, worldSchematic, MinecraftClient.getInstance());
 
-            for (Guide guide : guides) {
-                // Add INTERACT_BLOCKS pull by DarkReaper231
-                if (guide.canExecute(player) && Configs.INTERACT_BLOCKS.getBooleanValue()) {
-                    printDebug("Executing {} for {}", guide, state);
-                    List<Action> actions = guide.execute(player);
-                    actionHandler.addActions(actions.toArray(Action[]::new));
-                    return true;
+            // Check which hand has the item
+            Hand hand = EntityUtils.getUsedHandForItem(player, stack);
+            if (hand == null) continue;
+
+            // Find a valid neighbor block to click on
+            Direction[] directions = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP, Direction.DOWN};
+            for (Direction side : directions) {
+                BlockPos neighborPos = pos.offset(side);
+                BlockState neighborState = player.getWorld().getBlockState(neighborPos);
+
+                // Skip replaceable neighbors (can't click on air/grass/fluid)
+                if (neighborState.isReplaceable()) continue;
+
+                Vec3d hitPos = Vec3d.ofCenter(pos).add(Vec3d.of(side.getVector()).multiply(0.5));
+
+                // Apply accurate placement protocol to hitPos
+                EasyPlaceProtocol protocol = PlacementHandler.getEffectiveProtocolVersion();
+                Direction adjustedSide = applyPlacementFacing(stateSchematic, side, stateClient);
+
+                if (protocol == EasyPlaceProtocol.V3) {
+                    hitPos = WorldUtils.applyPlacementProtocolV3(pos, stateSchematic, hitPos);
+                } else if (protocol == EasyPlaceProtocol.V2) {
+                    hitPos = WorldUtils.applyCarpetProtocolHitVec(pos, stateSchematic, hitPos);
+                } else if (protocol == EasyPlaceProtocol.SLAB_ONLY) {
+                    hitPos = applySlabProtocol(pos, stateSchematic, hitPos);
                 }
-                if (guide.skipOtherGuides()) {
-                    continue findBlock;
-                }
+                // NONE: no protocol encoding, use raw hitPos
+
+                BlockHitResult hitResult = new BlockHitResult(hitPos, adjustedSide, pos, false);
+                MinecraftClient.getInstance().interactionManager.interactBlock(player, hand, hitResult);
+
+                printDebug("Placed {} at {}", stateSchematic.getBlock().getName(), pos);
+                return true; // One placement per tick
             }
         }
 
         return false;
+    }
+
+    /**
+     * Applies the SLAB_ONLY protocol: adjusts hitVec Y coordinate for slabs and stairs.
+     * Replicates the logic from WorldUtils.applyBlockSlabProtocol() / applySlabOrStairHitVecY().
+     */
+    private static Vec3d applySlabProtocol(BlockPos pos, BlockState state, Vec3d hitVecIn) {
+        double newY = applySlabOrStairHitVecY(hitVecIn.y, pos, state);
+        return newY != hitVecIn.y ? new Vec3d(hitVecIn.x, newY, hitVecIn.z) : hitVecIn;
+    }
+
+    /**
+     * Adjusts Y coordinate for slab/stair placement.
+     * Replicates the logic from WorldUtils.applySlabOrStairHitVecY().
+     */
+    private static double applySlabOrStairHitVecY(double origY, BlockPos pos, BlockState state) {
+        double y = origY;
+
+        if (state.contains(Properties.SLAB_TYPE)) {
+            y = pos.getY();
+            if (state.get(Properties.SLAB_TYPE) == SlabType.TOP) {
+                y += 0.99;
+            }
+        } else if (state.contains(Properties.BLOCK_HALF)) {
+            y = pos.getY();
+            if (state.get(Properties.BLOCK_HALF) == BlockHalf.TOP) {
+                y += 0.99;
+            }
+        }
+
+        return y;
+    }
+
+    /**
+     * Applies placement facing adjustments for slabs, stairs etc.
+     * Replicates the logic from WorldUtils.applyPlacementFacing().
+     */
+    private static Direction applyPlacementFacing(BlockState stateSchematic, Direction side, BlockState stateClient) {
+        Block blockSchematic = stateSchematic.getBlock();
+        Block blockClient = stateClient.getBlock();
+
+        if (blockSchematic instanceof SlabBlock) {
+            if (stateSchematic.get(SlabBlock.TYPE) == SlabType.DOUBLE &&
+                    blockClient instanceof SlabBlock &&
+                    stateClient.get(SlabBlock.TYPE) != SlabType.DOUBLE) {
+                if (stateClient.get(SlabBlock.TYPE) == SlabType.TOP) {
+                    return Direction.DOWN;
+                } else {
+                    return Direction.UP;
+                }
+            } else {
+                return Direction.NORTH;
+            }
+        } else if (stateSchematic.contains(Properties.BLOCK_HALF)) {
+            side = stateSchematic.get(Properties.BLOCK_HALF) == BlockHalf.TOP ? Direction.DOWN : Direction.UP;
+        }
+
+        return side;
     }
 
     private List<BlockPos> getReachablePositions() {
