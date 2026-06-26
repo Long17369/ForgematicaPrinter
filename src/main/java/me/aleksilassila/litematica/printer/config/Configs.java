@@ -13,8 +13,8 @@ public class Configs {
     private static final String GENERIC_KEY = PrinterReference.MOD_KEY + ".config.generic";
 
     // Configs settings
-    public static final ConfigInteger PRINTING_INTERVAL = new ConfigInteger("printingInterval", 12, 1, 40, "Printing interval. Lower values mean faster printing speed.\nIf the printer creates \"ghost blocks\" or blocks are facing the wrong way, raise this value.");
-    public static final ConfigDouble PRINTING_RANGE = new ConfigDouble("printingRange", 5, 2.5, 5, "Printing block place range\nLower values are recommended for servers.");
+    public static final ConfigInteger PRINTING_INTERVAL = new ConfigInteger("printingInterval", 12, 1, 128, "Printing interval. Lower values mean faster printing speed.\nIf the printer creates \"ghost blocks\" or blocks are facing the wrong way, raise this value.");
+    public static final ConfigDouble PRINTING_RANGE = new ConfigDouble("printingRange", 5, 1, 128, "Printing block place range\nLower values are recommended for servers.");
     public static final ConfigBoolean PRINT_MODE = new ConfigBoolean("printingMode", false, "Autobuild / print loaded selection.\nBe aware that some servers and anticheat plugins do not allow printing.");
     public static final ConfigBoolean PRINT_DEBUG = new ConfigBoolean("printingDebug", false, "Enables Debug logging for printing.");
     public static final ConfigBoolean REPLACE_FLUIDS_SOURCE_BLOCKS = new ConfigBoolean("replaceFluidSourceBlocks", true, "Whether or not fluid source blocks should be replaced by the printer.");

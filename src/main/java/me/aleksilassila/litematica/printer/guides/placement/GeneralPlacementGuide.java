@@ -79,7 +79,7 @@ public class GeneralPlacementGuide extends PlacementGuide {
             }
         }
 
-        return validSides.isEmpty() ? Optional.empty() : Optional.of(validSides.getFirst());
+        return validSides.isEmpty() ? Optional.empty() : Optional.of(validSides.get(0));
     }
 
     protected boolean getUseShift(SchematicBlockState state) {
