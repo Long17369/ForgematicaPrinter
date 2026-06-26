@@ -63,3 +63,11 @@ tasks.withType<ProcessResources> {
         expand(mapOf("version" to version))
     }
 }
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            from(components["java"])
+        }
+    }
+}
