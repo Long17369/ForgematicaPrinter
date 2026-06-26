@@ -6,6 +6,7 @@ import fi.dy.masa.litematica.world.WorldSchematic;
 import me.aleksilassila.litematica.printer.LitematicaMixinMod;
 import me.aleksilassila.litematica.printer.Printer;
 import me.aleksilassila.litematica.printer.SchematicBlockState;
+import me.aleksilassila.litematica.printer.config.Configs;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.client.MinecraftClient;
@@ -38,6 +39,9 @@ public class MixinClientPlayerEntity extends AbstractClientPlayerEntity {
         super(world, profile);
     }
 
+    @Unique
+    private int printerTickCounter = 0;
+
     @Inject(at = @At("TAIL"), method = "tick")
     public void tick(CallbackInfo ci) {
         ClientPlayerEntity clientPlayer = (ClientPlayerEntity) (Object) this;
@@ -47,7 +51,14 @@ public class MixinClientPlayerEntity extends AbstractClientPlayerEntity {
             LitematicaMixinMod.printer = new Printer(client, clientPlayer);
         }
 
-        // Dirty optimization
+        // Rate limit: respect PRINTING_INTERVAL at the mixin level
+        int tickRate = Configs.PRINTING_INTERVAL.getIntegerValue();
+        printerTickCounter++;
+        if (printerTickCounter % tickRate != 0) {
+            return;
+        }
+
+        // Run printer multiple times per tick for faster placement
         for (int i = 0; i < 10; i++) {
             if (!LitematicaMixinMod.printer.onGameTick()) {
                 break;

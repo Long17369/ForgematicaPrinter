@@ -11,6 +11,7 @@ import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
 import me.aleksilassila.litematica.printer.config.Configs;
 import me.aleksilassila.litematica.printer.config.Hotkeys;
+import me.aleksilassila.litematica.printer.mixin.WorldUtilsInvoker;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.SlabBlock;
@@ -39,8 +40,6 @@ public class Printer {
     @Nonnull
     public final ClientPlayerEntity player;
 
-    private int tickCounter = 0;
-
     public Printer(@Nonnull MinecraftClient client, @Nonnull ClientPlayerEntity player) {
         this.player = player;
     }
@@ -61,67 +60,87 @@ public class Printer {
             return false;
         }
 
-        // Rate limit: respect PRINTING_INTERVAL
-        int tickRate = Configs.PRINTING_INTERVAL.getIntegerValue();
-        tickCounter++;
-        if (tickCounter % tickRate != 0) {
-            return false;
-        }
-
         List<BlockPos> positions = getReachablePositions();
         for (BlockPos pos : positions) {
+            // Skip positions that were recently placed (server sync delay protection)
+            if (WorldUtils.easyPlaceIsPositionCached(pos)) {
+                continue;
+            }
+
             BlockState stateSchematic = worldSchematic.getBlockState(pos);
             BlockState stateClient = player.getWorld().getBlockState(pos);
 
             // Skip if already correct or air
-            if (stateSchematic.equals(stateClient) || stateSchematic.isAir()) {
+            if (stateSchematic.isAir()) continue;
+            if (stateSchematic.getBlock() == stateClient.getBlock()
+                    && statesEqualIgnoreWaterlogged(stateSchematic, stateClient)) {
                 continue;
             }
 
             // Get required item via Forgematica's MaterialCache
             ItemStack stack = MaterialCache.getInstance().getRequiredBuildItemForState(stateSchematic);
-            if (stack.isEmpty()) continue;
+            if (stack.isEmpty()) {
+                printDebug("No item found for {}", stateSchematic.getBlock().getName());
+                continue;
+            }
 
             // Switch to the required item
             InventoryUtils.schematicWorldPickBlock(stack, pos, worldSchematic, MinecraftClient.getInstance());
 
             // Check which hand has the item
             Hand hand = EntityUtils.getUsedHandForItem(player, stack);
-            if (hand == null) continue;
-
-            // Find a valid neighbor block to click on
-            Direction[] directions = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP, Direction.DOWN};
-            for (Direction side : directions) {
-                BlockPos neighborPos = pos.offset(side);
-                BlockState neighborState = player.getWorld().getBlockState(neighborPos);
-
-                // Skip replaceable neighbors (can't click on air/grass/fluid)
-                if (neighborState.isReplaceable()) continue;
-
-                Vec3d hitPos = Vec3d.ofCenter(pos).add(Vec3d.of(side.getVector()).multiply(0.5));
-
-                // Apply accurate placement protocol to hitPos
-                EasyPlaceProtocol protocol = PlacementHandler.getEffectiveProtocolVersion();
-                Direction adjustedSide = applyPlacementFacing(stateSchematic, side, stateClient);
-
-                if (protocol == EasyPlaceProtocol.V3) {
-                    hitPos = WorldUtils.applyPlacementProtocolV3(pos, stateSchematic, hitPos);
-                } else if (protocol == EasyPlaceProtocol.V2) {
-                    hitPos = WorldUtils.applyCarpetProtocolHitVec(pos, stateSchematic, hitPos);
-                } else if (protocol == EasyPlaceProtocol.SLAB_ONLY) {
-                    hitPos = applySlabProtocol(pos, stateSchematic, hitPos);
-                }
-                // NONE: no protocol encoding, use raw hitPos
-
-                BlockHitResult hitResult = new BlockHitResult(hitPos, adjustedSide, pos, false);
-                MinecraftClient.getInstance().interactionManager.interactBlock(player, hand, hitResult);
-
-                printDebug("Placed {} at {}", stateSchematic.getBlock().getName(), pos);
-                return true; // One placement per tick
+            if (hand == null) {
+                printDebug("Item {} not found in hand", stack.getItem().getName());
+                continue;
             }
+
+            // Calculate the side and hitPos from player's eye towards the target block.
+            Vec3d eyePos = player.getEyePos();
+            Vec3d targetCenter = Vec3d.ofCenter(pos);
+            Vec3d diff = targetCenter.subtract(eyePos);
+            Direction side = Direction.getFacing(diff.x, diff.y, diff.z);
+            Vec3d hitPos = targetCenter.add(Vec3d.of(side.getVector()).multiply(-0.5));
+
+            // Apply accurate placement protocol to hitPos
+            EasyPlaceProtocol protocol = PlacementHandler.getEffectiveProtocolVersion();
+            Direction adjustedSide = applyPlacementFacing(stateSchematic, side, stateClient);
+
+            if (protocol == EasyPlaceProtocol.V3) {
+                hitPos = WorldUtils.applyPlacementProtocolV3(pos, stateSchematic, hitPos);
+            } else if (protocol == EasyPlaceProtocol.V2) {
+                hitPos = WorldUtils.applyCarpetProtocolHitVec(pos, stateSchematic, hitPos);
+            } else if (protocol == EasyPlaceProtocol.SLAB_ONLY) {
+                hitPos = applySlabProtocol(pos, stateSchematic, hitPos);
+            }
+            // NONE: no protocol encoding, use raw hitPos
+
+            BlockHitResult hitResult = new BlockHitResult(hitPos, adjustedSide, pos, false);
+            MinecraftClient.getInstance().interactionManager.interactBlock(player, hand, hitResult);
+
+            // Mark position as recently placed to prevent duplicate placement due to server latency
+            WorldUtilsInvoker.invokeCacheEasyPlacePosition(pos);
+            WorldUtils.setEasyPlaceLastPickBlockTime();
+
+            printDebug("Placed {} at {}", stateSchematic.getBlock().getName(), pos);
+            return true; // One placement per tick
         }
 
         return false;
+    }
+
+    /**
+     * Compares two block states ignoring the WATERLOGGED property.
+     * This prevents waterlogged blocks from being skipped as "already correct".
+     */
+    private static boolean statesEqualIgnoreWaterlogged(BlockState a, BlockState b) {
+        if (a == b) return true;
+        if (a.getBlock() != b.getBlock()) return false;
+
+        for (net.minecraft.state.property.Property<?> prop : a.getProperties()) {
+            if (prop == Properties.WATERLOGGED) continue;
+            if (!a.get(prop).equals(b.get(prop))) return false;
+        }
+        return true;
     }
 
     /**
