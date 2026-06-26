@@ -70,10 +70,19 @@ public class Printer {
             BlockState stateSchematic = worldSchematic.getBlockState(pos);
             BlockState stateClient = player.getWorld().getBlockState(pos);
 
-            // Skip if already correct or air
+            // Skip if air in schematic
             if (stateSchematic.isAir()) continue;
-            if (stateSchematic.getBlock() == stateClient.getBlock()
-                    && statesEqualIgnoreWaterlogged(stateSchematic, stateClient)) {
+
+            // If the target position already has the correct block type, skip placement.
+            // State corrections (like rotation) should be handled by interact/use,
+            // not by placing a new block which would end up in the wrong position.
+            if (stateSchematic.getBlock() == stateClient.getBlock()) {
+                continue;
+            }
+
+            // If the target position already has some other solid block, skip it.
+            // Placing here would put the block on the wrong face of the existing block.
+            if (!stateClient.isAir() && !stateClient.isReplaceable()) {
                 continue;
             }
 
@@ -126,21 +135,6 @@ public class Printer {
         }
 
         return false;
-    }
-
-    /**
-     * Compares two block states ignoring the WATERLOGGED property.
-     * This prevents waterlogged blocks from being skipped as "already correct".
-     */
-    private static boolean statesEqualIgnoreWaterlogged(BlockState a, BlockState b) {
-        if (a == b) return true;
-        if (a.getBlock() != b.getBlock()) return false;
-
-        for (net.minecraft.state.property.Property<?> prop : a.getProperties()) {
-            if (prop == Properties.WATERLOGGED) continue;
-            if (!a.get(prop).equals(b.get(prop))) return false;
-        }
-        return true;
     }
 
     /**
