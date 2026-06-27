@@ -71,7 +71,8 @@ public class Printer {
             BlockState stateClient = player.getWorld().getBlockState(pos);
 
             // Skip if air in schematic
-            if (stateSchematic.isAir()) continue;
+            if (stateSchematic.isAir())
+                continue;
 
             // If the target position already has the correct block type, skip placement.
             // State corrections (like rotation) should be handled by interact/use,
@@ -104,6 +105,8 @@ public class Printer {
             }
 
             // Calculate the side and hitPos from player's eye towards the target block.
+            // The actual block orientation will be corrected by Forgematica's
+            // MixinBlockItem.modifyPlacementState() during interactBlock.
             Vec3d eyePos = player.getEyePos();
             Vec3d targetCenter = Vec3d.ofCenter(pos);
             Vec3d diff = targetCenter.subtract(eyePos);
@@ -138,8 +141,10 @@ public class Printer {
     }
 
     /**
-     * Applies the SLAB_ONLY protocol: adjusts hitVec Y coordinate for slabs and stairs.
-     * Replicates the logic from WorldUtils.applyBlockSlabProtocol() / applySlabOrStairHitVecY().
+     * Applies the SLAB_ONLY protocol: adjusts hitVec Y coordinate for slabs and
+     * stairs.
+     * Replicates the logic from WorldUtils.applyBlockSlabProtocol() /
+     * applySlabOrStairHitVecY().
      */
     private static Vec3d applySlabProtocol(BlockPos pos, BlockState state, Vec3d hitVecIn) {
         double newY = applySlabOrStairHitVecY(hitVecIn.y, pos, state);
@@ -219,14 +224,12 @@ public class Printer {
         }
 
         return positions.stream()
-                .filter(p ->
-                {
+                .filter(p -> {
                     Vec3d vec = Vec3d.ofCenter(p);
                     return this.player.getPos().squaredDistanceTo(vec) > 1
                             && this.player.getEyePos().squaredDistanceTo(vec) > 1;
                 })
-                .sorted((a, b) ->
-                {
+                .sorted((a, b) -> {
                     double aDistance = this.player.getPos().squaredDistanceTo(Vec3d.ofCenter(a));
                     double bDistance = this.player.getPos().squaredDistanceTo(Vec3d.ofCenter(b));
                     return Double.compare(aDistance, bDistance);

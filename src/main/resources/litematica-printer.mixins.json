@@ -8,6 +8,7 @@
     "ConfigsMixin",
     "GuiConfigsMixin",
     "InputHandlerMixin",
+    "MixinBlockItemPlacement",
     "WorldUtilsInvoker"
   ],
   "injectors": {
